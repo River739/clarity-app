@@ -1,15 +1,37 @@
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from database import engine, get_db, Base
 from models import Transaction, User, Budget
 from classifier import classify_merchant
-from auth import hash_password, verify_password, create_access_token, get_current_user
+from auth import hash_password, verify_password, create_access_token, get_current_user, decode_token
 from pydantic import BaseModel
 import re
 
 Base.metadata.create_all(bind=engine)
+
+# --- WebSocket Manager ---
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: dict = {}
+
+    async def connect(self, websocket: WebSocket, user_id: int):
+        await websocket.accept()
+        if user_id not in self.active_connections:
+            self.active_connections[user_id] = []
+        self.active_connections[user_id].append(websocket)
+
+    def disconnect(self, websocket: WebSocket, user_id: int):
+        if user_id in self.active_connections:
+            self.active_connections[user_id].remove(websocket)
+
+    async def send_to_user(self, user_id: int, message: dict):
+        if user_id in self.active_connections:
+            for connection in self.active_connections[user_id]:
+                await connection.send_json(message)
+
+manager = ConnectionManager()
 
 app = FastAPI(title="Clarity API")
 
@@ -83,7 +105,7 @@ def register(data: UserRegister, db: Session = Depends(get_db)):
     existing = db.query(User).filter(User.email == data.email).first()
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
-    
+
     user = User(
         email=data.email,
         name=data.name,
@@ -92,7 +114,7 @@ def register(data: UserRegister, db: Session = Depends(get_db)):
     db.add(user)
     db.commit()
     db.refresh(user)
-    
+
     token = create_access_token({"sub": str(user.id)})
     return {"access_token": token, "token_type": "bearer", "name": user.name}
 
@@ -101,12 +123,12 @@ def login(form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get
     user = db.query(User).filter(User.email == form.username).first()
     if not user or not verify_password(form.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Invalid credentials")
-    
+
     token = create_access_token({"sub": str(user.id)})
     return {"access_token": token, "token_type": "bearer", "name": user.name}
 
 @app.post("/parse-sms")
-def parse_sms(sms: SMSInput, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+async def parse_sms(sms: SMSInput, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     parsed = parse_upi_sms(sms.text)
     category = classify_merchant(parsed["merchant"])
 
@@ -124,17 +146,22 @@ def parse_sms(sms: SMSInput, db: Session = Depends(get_db), current_user: User =
     db.commit()
     db.refresh(transaction)
 
-    return {
-        "message": "Transaction saved",
-        "data": {
-            "id": transaction.id,
-            "bank": transaction.bank_name,
-            "amount": transaction.amount,
-            "merchant": transaction.merchant,
-            "category": transaction.category,
-            "type": transaction.transaction_type
-        }
+    transaction_data = {
+        "id": transaction.id,
+        "bank": transaction.bank_name,
+        "amount": transaction.amount,
+        "merchant": transaction.merchant,
+        "category": transaction.category,
+        "type": transaction.transaction_type,
+        "timestamp": str(transaction.timestamp)
     }
+
+    await manager.send_to_user(current_user.id, {
+        "event": "new_transaction",
+        "data": transaction_data
+    })
+
+    return {"message": "Transaction saved", "data": transaction_data}
 
 @app.get("/transactions")
 def get_transactions(bank: str = None, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
@@ -173,7 +200,7 @@ def create_budget(data: BudgetInput, db: Session = Depends(get_db), current_user
 @app.get("/summary")
 def get_summary(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     transactions = db.query(Transaction).filter(Transaction.user_id == current_user.id).all()
-    
+
     summary = {}
     total_spent = 0
     banks = set()
@@ -191,3 +218,23 @@ def get_summary(db: Session = Depends(get_db), current_user: User = Depends(get_
         "banks": list(banks),
         "spending_by_category": summary
     }
+
+@app.websocket("/ws/{token}")
+async def websocket_endpoint(websocket: WebSocket, token: str, db: Session = Depends(get_db)):
+    try:
+        payload = decode_token(token)
+        user_id = int(payload.get("sub"))
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            await websocket.close(code=1008)
+            return
+    except:
+        await websocket.close(code=1008)
+        return
+
+    await manager.connect(websocket, user_id)
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        manager.disconnect(websocket, user_id)

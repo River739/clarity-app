@@ -1,23 +1,32 @@
-import logo from './logo.svg';
-import './App.css';
+import React, { useState } from 'react';
+import Login from './pages/Login';
+import Dashboard from './pages/Dashboard';
 
 function App() {
+  const [token, setToken] = useState(localStorage.getItem('clarity_token'));
+  const [userName, setUserName] = useState(localStorage.getItem('clarity_name'));
+
+  const handleLogin = (newToken, name) => {
+    localStorage.setItem('clarity_token', newToken);
+    localStorage.setItem('clarity_name', name);
+    setToken(newToken);
+    setUserName(name);
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('clarity_token');
+    localStorage.removeItem('clarity_name');
+    setToken(null);
+    setUserName(null);
+  };
+
   return (
-    <div className="App">
-      <header className="App-header">
-        <img src={logo} className="App-logo" alt="logo" />
-        <p>
-          Edit <code>src/App.js</code> and save to reload.
-        </p>
-        <a
-          className="App-link"
-          href="https://reactjs.org"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Learn React
-        </a>
-      </header>
+    <div>
+      {token ? (
+        <Dashboard token={token} userName={userName} onLogout={handleLogout} />
+      ) : (
+        <Login onLogin={handleLogin} />
+      )}
     </div>
   );
 }

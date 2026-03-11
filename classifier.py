@@ -4,7 +4,7 @@ import os
 
 load_dotenv()
 
-client = Groq(api_key=os.getenv("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"))
+client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
 MERCHANT_CATEGORIES = {
     # Food

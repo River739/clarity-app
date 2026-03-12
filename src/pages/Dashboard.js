@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
 
-const API = 'http://127.0.0.1:8000';
+const API = 'https://clarity-app-production.up.railway.app';
 
 const COLORS = ['#4F46E5', '#7C3AED', '#EC4899', '#F59E0B', '#10B981', '#3B82F6', '#EF4444', '#8B5CF6'];
 
@@ -39,7 +39,7 @@ function Dashboard({ token, userName, onLogout }) {
   };
 
   const connectWebSocket = () => {
-    const ws = new WebSocket(`ws://127.0.0.1:8000/ws/${token}`);
+    const ws = new WebSocket(`wss://clarity-app-production.up.railway.app/ws/${token}`);
     wsRef.current = ws;
 
     ws.onmessage = (event) => {

@@ -1,0 +1,3 @@
+cd C:\Users\Bhavana\clarity-backend
+venv\Scripts\activate
+pip freeze > requirements.txt
